@@ -65,7 +65,7 @@ static void initSystem(BurgerSystem *s, int bands, Ingredients tpl) {
         s->bands[i].available.lettuce = 5;
         s->bands[i].available.meat = 5;
         s->bands[i].available.cheese = 5;
-        s->bands[i].current_order = -1;
+        s->bands[i].current_order = -1; // ninguna orden asignada
     }
 }
 
@@ -73,8 +73,8 @@ static void initSystem(BurgerSystem *s, int bands, Ingredients tpl) {
 static void createSharedControl(int bands) {
     size_t sz = sizeof(SharedControl);
     ctrl_shmid = shmget(CTRL_SHM_KEY, sz, IPC_CREAT | IPC_EXCL | 0666); // intenta crear memria compartida
-    if (ctrl_shmid == -1) {
-        if (errno == EEXIST) { 
+    if (ctrl_shmid == -1) { 
+        if (errno == EEXIST) { // Si ya existe
             // Intentar usar el existente
             ctrl_shmid = shmget(CTRL_SHM_KEY, sz, 0666);
             if (ctrl_shmid == -1) {
@@ -92,13 +92,14 @@ static void createSharedControl(int bands) {
         perror("shmget control"); 
         exit(1); }
 
-    shared_ctrl = (SharedControl*)shmat(ctrl_shmid, NULL, 0);
+    shared_ctrl = (SharedControl*)shmat(ctrl_shmid, NULL, 0); // Conecta la memoria compartida
     if (shared_ctrl == (void*)-1) { 
         perror("shmat control"); 
         exit(1); 
     }
     
     // Inicializar los campos de SharedControl
+    // Esta seccion ya es parte de la memoria compartida
     memset(shared_ctrl, 0, sizeof(*shared_ctrl));
     shared_ctrl->running = 1;
     shared_ctrl->band_count = bands;
@@ -116,7 +117,7 @@ static void* bandThread(void *arg) {
         sem_wait(&s->orders_sem);
         if (!s->running || !shared_ctrl->running) break;
 
-        // Consultar estado externo
+        // Consultar estado externo (Si el control externo pausó esta banda)
         sem_wait(&shared_ctrl->mutex);
         BandState ext = shared_ctrl->band_states[id];
         sem_post(&shared_ctrl->mutex);
@@ -129,10 +130,7 @@ static void* bandThread(void *arg) {
         sem_wait(&s->mutex);
         PreparationBand *b = &s->bands[id];
         Order *o = &s->orders[s->queue_front];
-        if (o->state != PENDING) {
-            sem_post(&s->mutex);
-            continue;
-        }
+
         // Verificar si hay ingredientes suficientes
         if (!checkIngredients(&b->available, &o->ingredients)) {
             // Marcar WAITING si no estaba
@@ -150,7 +148,6 @@ static void* bandThread(void *arg) {
             continue;
         }
         // Tomar la orden y procesarla
-        o->state = IN_PROGRESS;
         s->queue_front = (s->queue_front + 1) % MAX_ORDERS;
         s->queue_count--;
         b->current_order = o->id;
@@ -158,8 +155,9 @@ static void* bandThread(void *arg) {
         useIngredients(&b->available, &o->ingredients);
         sem_post(&s->mutex);
 
-        sleep(1 + rand()%2);
+        sleep(1 + rand()%2); // Simula tiempo de preparación (1-2s)
 
+        // Marcar orden como completada
         sem_wait(&s->mutex);
         b->burgers_processed++;
         b->current_order = -1;
@@ -176,7 +174,7 @@ static void* orderGeneratorThread(void *arg) {
     int id = 1;
     while (s->running && shared_ctrl->running) {
         sleep(1);
-        // Procesar restock pedido externamente
+        // Procesar restock pedido externamente (control.c)
         sem_wait(&shared_ctrl->mutex);
         int need_restock = shared_ctrl->restock_request;
         if (need_restock) shared_ctrl->restock_request = 0;
@@ -199,9 +197,7 @@ static void* orderGeneratorThread(void *arg) {
         if (s->queue_count < MAX_ORDERS) {
             Order *o = &s->orders[s->queue_rear];
             o->id = id++;
-            o->state = PENDING;
             o->ingredients = s->order_template;
-            o->creation_time = time(NULL);
             s->queue_rear = (s->queue_rear + 1) % MAX_ORDERS;
             s->queue_count++;
             s->total_orders++;
@@ -235,12 +231,12 @@ static void* monitorThread(void *arg) {
 
         for (int i = 0; i < s->band_count; i++) {
             sem_wait(&shared_ctrl->mutex);
-            BandState ext = shared_ctrl->band_states[i];
+            BandState ext = shared_ctrl->band_states[i]; // Estado externo (si fue pausada por control)
             sem_post(&shared_ctrl->mutex);
 
             PreparationBand *b = &s->bands[i];
 
-            // Estado efectivo mostrado
+            // Definir estado efectivo a mostrar
             const char *st;
             if (ext == STOPPED) st = "DETENIDO";
             else if (b->state == WAITING_FOR_INGREDIENTS) st = "EN ESPERA";
@@ -274,6 +270,7 @@ static void* monitorThread(void *arg) {
     return NULL;
 }
 
+// Manejador de señal para cierre ordenado
 static void handleSignal(int sig) {
     (void)sig;
     system_local.running = 0;
@@ -291,8 +288,9 @@ int main(int argc, char *argv[]) {
         return 1; 
     }
 
-    Ingredients tpl = { atoi(argv[2]),atoi(argv[3]),atoi(argv[4]),
-                        atoi(argv[5]),atoi(argv[6]),atoi(argv[7]) };
+    // Plantilla de ingredientes por orden
+    Ingredients tpl = { atoi(argv[2]), atoi(argv[3]), atoi(argv[4]),
+                        atoi(argv[5]), atoi(argv[6]), atoi(argv[7]) };
     if (tpl.buns<1 || tpl.meat<1) { 
         printf("Pan y carne >=1\n"); 
         return 1; 
@@ -313,6 +311,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&mon_thread, NULL, monitorThread, NULL);
 
     while (system_local.running && shared_ctrl->running) {
+        // Usar select para esperar entrada en stdin con timeout si se quire controlar desde burger_machine
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(STDIN_FILENO, &rfds);
@@ -325,6 +324,7 @@ int main(int argc, char *argv[]) {
         // Revisa si control externo pidió parar mientras esperábamos
         if (!shared_ctrl->running) break;
 
+        // Maneja entrada de usuario si hay
         if (ret > 0 && FD_ISSET(STDIN_FILENO, &rfds)) {
             int c = getchar();
             if (c == EOF) break;

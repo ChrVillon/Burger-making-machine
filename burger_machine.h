@@ -11,16 +11,13 @@
 // Clave para memoria compartida del control externo
 #define CTRL_SHM_KEY 0x51544231
 
-typedef enum { STOPPED, ACTIVE, WAITING_FOR_INGREDIENTS, PREPARING } BandState;
-typedef enum { PENDING, IN_PROGRESS, COMPLETED } OrderState;
+typedef enum { STOPPED, ACTIVE, WAITING_FOR_INGREDIENTS, PREPARING } BandState; // Estados de una banda
 
-typedef struct { int buns,tomato,onion,lettuce,meat,cheese; } Ingredients;
+typedef struct { int buns,tomato,onion,lettuce,meat,cheese; } Ingredients; // Ingredientes
 
 typedef struct {
     int id;
-    OrderState state;
     Ingredients ingredients;
-    time_t creation_time;
 } Order;
 
 typedef struct {
@@ -35,11 +32,11 @@ typedef struct {
     int band_count;
     PreparationBand bands[MAX_BANDS];
     Order orders[MAX_ORDERS];
-    int queue_front, queue_rear, queue_count;
+    int queue_front, queue_rear, queue_count; // campos para manejar la cola de ordenes
     int total_orders, completed_orders;
     Ingredients order_template;
-    sem_t mutex;
-    sem_t orders_sem;
+    sem_t mutex; // mutex para proteger acceso a la estructura
+    sem_t orders_sem; // semáforo para contar órdenes pendientes
     int running;
 } BurgerSystem;
 
@@ -48,9 +45,9 @@ typedef struct {
     int running;
     int band_count;
     BandState band_states[MAX_BANDS]; // STOPPED / ACTIVE (controla ejecución)
-    int restock_request;              // 1 => servidor debe hacer restock y poner 0
-    pid_t server_pid;                 // asegúrate de que control.c use esto
-    sem_t mutex;                      // pshared=1
+    int restock_request;              // Para incar que se debe hacer restock
+    pid_t server_pid;                 // PID del proceso servidor (burger_machine) para enviar señales
+    sem_t mutex;                      // Mutex para proteger acceso a esta estructura
 } SharedControl;
 
 #endif
