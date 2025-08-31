@@ -8,18 +8,26 @@
 #include "burger_machine.h"
 
 int main() {
-    int shmid = shmget(CTRL_SHM_KEY, sizeof(SharedControl), 0666);
-    if (shmid == -1) { perror("shmget control"); return 1; }
-    SharedControl *c = (SharedControl*)shmat(shmid, NULL, 0);
-    if (c == (void*)-1) { perror("shmat control"); return 1; }
+    int shmid = shmget(CTRL_SHM_KEY, sizeof(SharedControl), 0666); // intenta conectar a memoria compartida existente
+    if (shmid == -1) { 
+        perror("shmget control"); 
+        return 1; 
+    }
+
+    SharedControl *c = (SharedControl*)shmat(shmid, NULL, 0); // conecta la memoria compartida
+    if (c == (void*)-1) { 
+        perror("shmat control"); 
+        return 1; 
+    }
 
     printf("Control externo conectado. Bandas:%d\n", c->band_count);
     printf("Comandos: 1-%d pausar bandar | r restock | q salir\n", c->band_count);
 
     int ch;
-    while (c->running && (ch=getchar())!=EOF) {
-        if (ch=='\n') continue;
-        if (ch>='1' && ch<='9') {
+    while (c->running && (ch = getchar()) != EOF) {
+        // Verifica si detiene las bandas, restock o salir
+        if (ch == '\n') continue;
+        if (ch >= '1' && ch <= '9') {
             int id = ch-'1';
             if (id < c->band_count) {
                 sem_wait(&c->mutex);
@@ -30,12 +38,12 @@ int main() {
                 printf("[CTRL] Banda %d -> %s\n", id+1,
                        st==ACTIVE?"ACTIVA":"DETENIDA");
             }
-        } else if (ch=='r' || ch=='R') {
+        } else if (ch == 'r' || ch == 'R') {
             sem_wait(&c->mutex);
             c->restock_request = 1;
             sem_post(&c->mutex);
             printf("[CTRL] Restock solicitado\n");
-        } else if (ch=='q' || ch=='Q') {
+        } else if (ch == 'q' || ch == 'Q') {
             sem_wait(&c->mutex);
             c->running = 0;
             pid_t pid = c->server_pid;

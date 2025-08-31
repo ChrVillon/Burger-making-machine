@@ -8,7 +8,7 @@
 #define MAX_BANDS    9
 #define MAX_ORDERS   15
 
-// Clave SOLO para el segmento mínimo de control
+// Clave para memoria compartida del control externo
 #define CTRL_SHM_KEY 0x51544231
 
 typedef enum { STOPPED, ACTIVE, WAITING_FOR_INGREDIENTS, PREPARING } BandState;
